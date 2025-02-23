@@ -1,0 +1,19 @@
+{
+  "name": "k8s-slackbot",
+  "version": "1.0.0",
+  "description": "Slack bot for managing Kubernetes services",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@slack/bolt": "^3.17.0",
+    "@kubernetes/client-node": "^0.20.0",
+    "aws-sdk": "^2.1528.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+} 
