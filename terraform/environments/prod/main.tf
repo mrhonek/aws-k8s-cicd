@@ -58,9 +58,9 @@ resource "aws_iam_policy" "github_actions" {
           "iam:*",
           "vpc:*",
           "ec2:*",
-          "kms:*",              
-          "logs:*",             
-          "cloudwatch:*"         
+          "kms:*",
+          "logs:*",
+          "cloudwatch:*"
         ]
         Resource = "*"
       }
@@ -138,7 +138,7 @@ module "eks" {
   create_cloudwatch_log_group = false
   create_kms_key              = false
   cluster_encryption_config   = {}
-  
+
   # Handle any IAM role policy warning
   manage_aws_auth_configmap = false
 
