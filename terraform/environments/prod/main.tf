@@ -1,26 +1,31 @@
 # GitHub OIDC Provider and IAM Role
-resource "aws_iam_openid_connect_provider" "github_actions" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
-  # Handle existing resources and prevent destroy
-  lifecycle {
-    prevent_destroy = true
-    ignore_changes = [
-      thumbprint_list,
-    ]
-    # Add this to handle the case where the resource already exists
-    # This will make Terraform import the resource if it exists instead of trying to create it
-    create_before_destroy = true
-  }
+# Use data source for existing OIDC provider instead of trying to create it
+data "aws_iam_openid_connect_provider" "github_actions" {
+  url = "https://token.actions.githubusercontent.com"
 }
+
+# Original resource kept but commented out for reference
+# resource "aws_iam_openid_connect_provider" "github_actions" {
+#   url             = "https://token.actions.githubusercontent.com"
+#   client_id_list  = ["sts.amazonaws.com"]
+#   thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
+#   # Handle existing resources and prevent destroy
+#   lifecycle {
+#     prevent_destroy = true
+#     ignore_changes = [
+#       thumbprint_list,
+#     ]
+#     # Add this to handle the case where the resource already exists
+#     create_before_destroy = true
+#   }
+# }
 
 data "aws_iam_policy_document" "github_actions_assume_role" {
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github_actions.arn]
+      identifiers = [data.aws_iam_openid_connect_provider.github_actions.arn]
     }
     condition {
       test     = "StringLike"
@@ -30,51 +35,63 @@ data "aws_iam_policy_document" "github_actions_assume_role" {
   }
 }
 
-resource "aws_iam_role" "github_actions" {
-  name               = "github-actions-role"
-  assume_role_policy = data.aws_iam_policy_document.github_actions_assume_role.json
-  # Prevent destroy of this resource when Terraform runs
-  lifecycle {
-    prevent_destroy = true
-  }
+# Use data source for existing IAM role
+data "aws_iam_role" "github_actions" {
+  name = "github-actions-role"
 }
 
-resource "aws_iam_role_policy_attachment" "github_actions_eks" {
-  role       = aws_iam_role.github_actions.name
-  policy_arn = aws_iam_policy.github_actions.arn
-}
+# Original resource kept but commented out for reference
+# resource "aws_iam_role" "github_actions" {
+#   name               = "github-actions-role"
+#   assume_role_policy = data.aws_iam_policy_document.github_actions_assume_role.json
+#   # Prevent destroy of this resource when Terraform runs
+#   lifecycle {
+#     prevent_destroy = true
+#   }
+# }
 
-resource "aws_iam_policy" "github_actions" {
+# Use data source for existing IAM policy
+data "aws_iam_policy" "github_actions" {
   name = "github-actions-policy"
+}
 
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "eks:*",
-          "ecr:*",
-          "iam:*",
-          "vpc:*",
-          "ec2:*",
-          "kms:*",
-          "logs:*",
-          "cloudwatch:*"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-  # Handle existing resources and prevent destroy
-  lifecycle {
-    prevent_destroy = true
-    ignore_changes = [
-      policy,
-    ]
-    # Add this to handle the case where the resource already exists
-    create_before_destroy = true
-  }
+# Original resource kept but commented out for reference
+# resource "aws_iam_policy" "github_actions" {
+#   name = "github-actions-policy"
+#
+#   policy = jsonencode({
+#     Version = "2012-10-17"
+#     Statement = [
+#       {
+#         Effect = "Allow"
+#         Action = [
+#           "eks:*",
+#           "ecr:*",
+#           "iam:*",
+#           "vpc:*",
+#           "ec2:*",
+#           "kms:*",
+#           "logs:*",
+#           "cloudwatch:*"
+#         ]
+#         Resource = "*"
+#       }
+#     ]
+#   })
+#   # Handle existing resources and prevent destroy
+#   lifecycle {
+#     prevent_destroy = true
+#     ignore_changes = [
+#       policy,
+#     ]
+#     # Add this to handle the case where the resource already exists
+#     create_before_destroy = true
+#   }
+# }
+
+# Use data source for existing EKS cluster
+data "aws_eks_cluster" "portfolio_cluster" {
+  name = "portfolio-cluster"
 }
 
 # VPC Configuration
@@ -110,59 +127,64 @@ module "vpc" {
   }
 }
 
-# EKS Configuration
-module "eks" {
-  source  = "terraform-aws-modules/eks/aws"
-  version = "~> 19.0"
-
-  cluster_name    = "portfolio-cluster"
-  cluster_version = "1.28"
-
-  cluster_endpoint_public_access = true
-
-  vpc_id     = module.vpc.vpc_id
-  subnet_ids = module.vpc.private_subnets
-
-  eks_managed_node_groups = {
-    general = {
-      desired_size = 1
-      min_size     = 1
-      max_size     = 2
-
-      instance_types = ["t3.small"]
-      capacity_type  = "SPOT"
-    }
-  }
-
-  # Disable resources that are causing permission issues
-  create_cloudwatch_log_group = false
-  create_kms_key              = false
-  cluster_encryption_config   = {}
-
-  # Handle any IAM role policy warning
-  manage_aws_auth_configmap = false
-
-  tags = {
-    Environment = "prod"
-    Terraform   = "true"
-  }
+# EKS Configuration - use only for references, don't create the cluster
+locals {
+  eks_cluster_name = "portfolio-cluster"
 }
+
+# EKS Module - commented out to prevent trying to create an already existing cluster
+# module "eks" {
+#   source  = "terraform-aws-modules/eks/aws"
+#   version = "~> 19.0"
+#
+#   cluster_name    = local.eks_cluster_name
+#   cluster_version = "1.28"
+#
+#   cluster_endpoint_public_access = true
+#
+#   vpc_id     = module.vpc.vpc_id
+#   subnet_ids = module.vpc.private_subnets
+#
+#   eks_managed_node_groups = {
+#     general = {
+#       desired_size = 1
+#       min_size     = 1
+#       max_size     = 2
+#
+#       instance_types = ["t3.small"]
+#       capacity_type  = "SPOT"
+#     }
+#   }
+#
+#   # Disable resources that are causing permission issues
+#   create_cloudwatch_log_group = false
+#   create_kms_key              = false
+#   cluster_encryption_config   = {}
+#
+#   # Handle any IAM role policy warning
+#   manage_aws_auth_configmap = false
+#
+#   tags = {
+#     Environment = "prod"
+#     Terraform   = "true"
+#   }
+# }
 
 # Existing outputs
 output "github_actions_role_arn" {
   description = "ARN of the IAM role for GitHub Actions"
-  value       = aws_iam_role.github_actions.arn
+  value       = data.aws_iam_role.github_actions.arn
 }
 
 # Additional outputs
 output "cluster_endpoint" {
   description = "Endpoint for EKS control plane"
-  value       = module.eks.cluster_endpoint
+  value       = data.aws_eks_cluster.portfolio_cluster.endpoint
 }
 
 output "cluster_name" {
   description = "Kubernetes Cluster Name"
-  value       = module.eks.cluster_name
+  value       = data.aws_eks_cluster.portfolio_cluster.name
 }
 
 output "vpc_id" {
