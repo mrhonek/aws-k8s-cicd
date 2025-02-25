@@ -35,21 +35,48 @@ jobs:
       run: |
         echo "Verifying AWS Authentication..."
         aws sts get-caller-identity
+        echo "Listing EKS clusters..."
         aws eks list-clusters
 
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Update kube config with extra verbosity
+    - name: Create aws-auth ConfigMap if needed
       run: |
-        echo "Updating kubeconfig with verbose output..."
-        aws --debug eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region us-west-1
+        echo "Checking if github-actions-role is already in the aws-auth ConfigMap..."
+        # Create kubeconfig
+        aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
         
-        echo "Verifying kubeconfig contents..."
-        cat ~/.kube/config | grep -v -E '(certificate-authority-data|client-certificate-data|client-key-data)'
+        # Store current identity info
+        ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+        ROLE_NAME="github-actions-role"
+        ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
         
-        echo "Checking cluster access..."
+        # Create or update the aws-auth ConfigMap to give the IAM role access to the cluster
+        echo "Adding role ${ROLE_ARN} to EKS cluster auth..."
+        
+        # Download eksctl if it doesn't exist
+        if ! command -v eksctl &> /dev/null; then
+          echo "Installing eksctl..."
+          curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+          sudo mv /tmp/eksctl /usr/local/bin
+        fi
+        
+        # Add the role to the aws-auth ConfigMap
+        eksctl create iamidentitymapping \
+          --cluster ${{ env.EKS_CLUSTER_NAME }} \
+          --region ${{ env.AWS_REGION }} \
+          --arn ${ROLE_ARN} \
+          --group system:masters \
+          --username github-actions || echo "Role mapping might already exist or failed to create"
+
+    - name: Update kube config 
+      run: |
+        echo "Updating kubeconfig..."
+        aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+        
+        echo "Verifying kubeconfig and cluster access..."
         kubectl config get-contexts
         kubectl auth can-i list pods || echo "Can't list pods, insufficient permissions"
 
@@ -91,4 +118,4 @@ jobs:
         fields: repo,message,commit,author,action,eventName,ref,workflow,job,took
       env:
         SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-      if: always() && env.SLACK_WEBHOOK_URL != ''
+      if: always()
