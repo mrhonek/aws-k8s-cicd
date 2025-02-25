@@ -130,44 +130,55 @@ data "aws_eks_cluster" "portfolio_cluster" {
 
 # Use data sources for existing VPC and subnets
 data "aws_vpc" "existing" {
-  filter {
-    name   = "tag:Name"
-    values = ["default"] # Replace with your existing VPC name if not using the default VPC
-  }
+  # Instead of filtering by name tag, just get the first available VPC
+  # This will typically return the default VPC if it exists
+  default = true
+}
+
+# Fallback data source if no default VPC exists
+data "aws_vpcs" "all" {
+  # Only used if the default VPC doesn't exist
+}
+
+locals {
+  # Use the first VPC from the list if the default VPC doesn't exist
+  vpc_id = try(data.aws_vpc.existing.id, tolist(data.aws_vpcs.all.ids)[0])
 }
 
 data "aws_subnets" "private" {
   filter {
     name   = "vpc-id"
-    values = [data.aws_vpc.existing.id]
+    values = [local.vpc_id]
   }
-  filter {
-    name   = "tag:Name"
-    values = ["*private*"] # Adjust this filter as needed for your subnet naming
-  }
+  # Remove the tag filter since the subnets might not have these tags
+  # filter {
+  #   name   = "tag:Name"
+  #   values = ["*private*"] # Adjust this filter as needed for your subnet naming
+  # }
 }
 
 data "aws_subnets" "public" {
   filter {
     name   = "vpc-id"
-    values = [data.aws_vpc.existing.id]
+    values = [local.vpc_id]
   }
-  filter {
-    name   = "tag:Name"
-    values = ["*public*"] # Adjust this filter as needed for your subnet naming
-  }
+  # Remove the tag filter since the subnets might not have these tags
+  # filter {
+  #   name   = "tag:Name"
+  #   values = ["*public*"] # Adjust this filter as needed for your subnet naming
+  # }
 }
 
-# Fetch individual subnet details
-data "aws_subnet" "private" {
-  for_each = toset(data.aws_subnets.private.ids)
-  id       = each.value
-}
+# Fetch individual subnet details if needed (commented out since we don't filter by tags anymore)
+# data "aws_subnet" "private" {
+#   for_each = toset(data.aws_subnets.private.ids)
+#   id       = each.value
+# }
 
-data "aws_subnet" "public" {
-  for_each = toset(data.aws_subnets.public.ids)
-  id       = each.value
-}
+# data "aws_subnet" "public" {
+#   for_each = toset(data.aws_subnets.public.ids)
+#   id       = each.value
+# }
 
 # EKS Configuration - use only for references, don't create the cluster
 locals {
@@ -184,7 +195,7 @@ locals {
 #
 #   cluster_endpoint_public_access = true
 #
-#   vpc_id     = data.aws_vpc.existing.id
+#   vpc_id     = local.vpc_id
 #   subnet_ids = data.aws_subnets.private.ids
 # }
 
@@ -207,7 +218,7 @@ output "cluster_name" {
 
 output "vpc_id" {
   description = "VPC ID"
-  value       = data.aws_vpc.existing.id
+  value       = local.vpc_id
 }
 
 output "subnets" {
