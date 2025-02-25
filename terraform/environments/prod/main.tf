@@ -132,7 +132,7 @@ data "aws_eks_cluster" "portfolio_cluster" {
 data "aws_vpc" "existing" {
   filter {
     name   = "tag:Name"
-    values = ["default"]  # Replace with your existing VPC name if not using the default VPC
+    values = ["default"] # Replace with your existing VPC name if not using the default VPC
   }
 }
 
@@ -143,7 +143,7 @@ data "aws_subnets" "private" {
   }
   filter {
     name   = "tag:Name"
-    values = ["*private*"]  # Adjust this filter as needed for your subnet naming
+    values = ["*private*"] # Adjust this filter as needed for your subnet naming
   }
 }
 
@@ -154,7 +154,7 @@ data "aws_subnets" "public" {
   }
   filter {
     name   = "tag:Name"
-    values = ["*public*"]  # Adjust this filter as needed for your subnet naming
+    values = ["*public*"] # Adjust this filter as needed for your subnet naming
   }
 }
 
