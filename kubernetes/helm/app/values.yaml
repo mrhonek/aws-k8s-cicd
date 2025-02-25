@@ -5,6 +5,8 @@ image:
   tag: ""
   pullPolicy: IfNotPresent
 
+containerPort: 3000
+
 nameOverride: ""
 fullnameOverride: ""
 
@@ -20,8 +22,9 @@ podSecurityContext: {}
 securityContext: {}
 
 service:
-  type: ClusterIP
+  type: LoadBalancer
   port: 80
+  targetPort: 3000
 
 ingress:
   enabled: true
