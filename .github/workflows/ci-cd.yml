@@ -54,12 +54,12 @@ jobs:
 
     - name: Terraform Plan
       working-directory: terraform/environments/prod
-      run: terraform plan -no-color
+      run: terraform plan -var="github_org=mrhonek" -no-color
       if: github.event_name == 'pull_request'
 
     - name: Terraform Apply
       working-directory: terraform/environments/prod
-      run: terraform apply -auto-approve
+      run: terraform apply -var="github_org=mrhonek" -auto-approve
       if: github.ref == 'refs/heads/main'
 
   build-and-push:
