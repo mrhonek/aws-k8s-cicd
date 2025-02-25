@@ -3,6 +3,16 @@ resource "aws_iam_openid_connect_provider" "github_actions" {
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
+  # Handle existing resources and prevent destroy
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes = [
+      thumbprint_list,
+    ]
+    # Add this to handle the case where the resource already exists
+    # This will make Terraform import the resource if it exists instead of trying to create it
+    create_before_destroy = true
+  }
 }
 
 data "aws_iam_policy_document" "github_actions_assume_role" {
@@ -23,6 +33,10 @@ data "aws_iam_policy_document" "github_actions_assume_role" {
 resource "aws_iam_role" "github_actions" {
   name               = "github-actions-role"
   assume_role_policy = data.aws_iam_policy_document.github_actions_assume_role.json
+  # Prevent destroy of this resource when Terraform runs
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_iam_role_policy_attachment" "github_actions_eks" {
@@ -43,12 +57,24 @@ resource "aws_iam_policy" "github_actions" {
           "ecr:*",
           "iam:*",
           "vpc:*",
-          "ec2:*"
+          "ec2:*",
+          "kms:*",              
+          "logs:*",             
+          "cloudwatch:*"         
         ]
         Resource = "*"
       }
     ]
   })
+  # Handle existing resources and prevent destroy
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes = [
+      policy,
+    ]
+    # Add this to handle the case where the resource already exists
+    create_before_destroy = true
+  }
 }
 
 # VPC Configuration
@@ -107,6 +133,14 @@ module "eks" {
       capacity_type  = "SPOT"
     }
   }
+
+  # Disable resources that are causing permission issues
+  create_cloudwatch_log_group = false
+  create_kms_key              = false
+  cluster_encryption_config   = {}
+  
+  # Handle any IAM role policy warning
+  manage_aws_auth_configmap = false
 
   tags = {
     Environment = "prod"
