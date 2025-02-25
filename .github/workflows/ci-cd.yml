@@ -7,9 +7,9 @@ on:
     branches: [ main ]
 
 env:
-  AWS_REGION: us-west-2
-  ECR_REPOSITORY: prod-app
-  EKS_CLUSTER_NAME: prod-eks-cluster
+  AWS_REGION: us-west-1
+  ECR_REPOSITORY: portfolio-app
+  EKS_CLUSTER_NAME: portfolio-cluster
 
 permissions:
   id-token: write
@@ -27,8 +27,17 @@ jobs:
     - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-        aws-region: ${{ env.AWS_REGION }}
+        role-to-assume: arn:aws:iam::537124942860:role/github-actions-role
+        aws-region: us-west-1
+        audience: sts.amazonaws.com
+        role-session-name: GitHubActions
+
+    - name: Debug AWS Configuration
+      run: |
+        echo "AWS SDK Version:"
+        aws --version
+        echo "AWS Identity:"
+        aws sts get-caller-identity
 
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
@@ -66,8 +75,13 @@ jobs:
     - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-        aws-region: ${{ env.AWS_REGION }}
+        role-to-assume: arn:aws:iam::537124942860:role/github-actions-role
+        aws-region: us-west-1
+        audience: sts.amazonaws.com
+        role-session-name: GitHubActions
+
+    - name: Debug AWS Configuration 
+      run: aws sts get-caller-identity
 
     - name: Login to Amazon ECR
       id: login-ecr
@@ -94,11 +108,16 @@ jobs:
     - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-        aws-region: ${{ env.AWS_REGION }}
+        role-to-assume: arn:aws:iam::537124942860:role/github-actions-role
+        aws-region: us-west-1
+        audience: sts.amazonaws.com
+        role-session-name: GitHubActions
+
+    - name: Debug AWS Configuration
+      run: aws sts get-caller-identity
 
     - name: Update kube config
-      run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+      run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region us-west-1
 
     - name: Deploy to EKS
       env:
