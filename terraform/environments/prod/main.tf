@@ -95,36 +95,78 @@ data "aws_eks_cluster" "portfolio_cluster" {
 }
 
 # VPC Configuration
-module "vpc" {
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.0"
+# Comment out VPC module that creates new VPC
+# module "vpc" {
+#   source  = "terraform-aws-modules/vpc/aws"
+#   version = "~> 5.0"
+#
+#   name = "portfolio-vpc"
+#   cidr = "10.0.0.0/16"
+#
+#   azs             = ["us-west-1a", "us-west-1b"]
+#   private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
+#   public_subnets  = ["10.0.101.0/24", "10.0.102.0/24"]
+#
+#   enable_nat_gateway     = true
+#   single_nat_gateway     = true
+#   one_nat_gateway_per_az = false
+#
+#   enable_dns_hostnames = true
+#   enable_dns_support   = true
+#
+#   public_subnet_tags = {
+#     "kubernetes.io/role/elb" = 1
+#   }
+#
+#   private_subnet_tags = {
+#     "kubernetes.io/role/internal-elb" = 1
+#   }
+#
+#   tags = {
+#     Environment = "prod"
+#     Terraform   = "true"
+#   }
+# }
 
-  name = "portfolio-vpc"
-  cidr = "10.0.0.0/16"
-
-  azs             = ["us-west-1a", "us-west-1b"]
-  private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
-  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24"]
-
-  enable_nat_gateway     = true
-  single_nat_gateway     = true
-  one_nat_gateway_per_az = false
-
-  enable_dns_hostnames = true
-  enable_dns_support   = true
-
-  public_subnet_tags = {
-    "kubernetes.io/role/elb" = 1
+# Use data sources for existing VPC and subnets
+data "aws_vpc" "existing" {
+  filter {
+    name   = "tag:Name"
+    values = ["default"]  # Replace with your existing VPC name if not using the default VPC
   }
+}
 
-  private_subnet_tags = {
-    "kubernetes.io/role/internal-elb" = 1
+data "aws_subnets" "private" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.existing.id]
   }
+  filter {
+    name   = "tag:Name"
+    values = ["*private*"]  # Adjust this filter as needed for your subnet naming
+  }
+}
 
-  tags = {
-    Environment = "prod"
-    Terraform   = "true"
+data "aws_subnets" "public" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.existing.id]
   }
+  filter {
+    name   = "tag:Name"
+    values = ["*public*"]  # Adjust this filter as needed for your subnet naming
+  }
+}
+
+# Fetch individual subnet details
+data "aws_subnet" "private" {
+  for_each = toset(data.aws_subnets.private.ids)
+  id       = each.value
+}
+
+data "aws_subnet" "public" {
+  for_each = toset(data.aws_subnets.public.ids)
+  id       = each.value
 }
 
 # EKS Configuration - use only for references, don't create the cluster
@@ -142,32 +184,8 @@ locals {
 #
 #   cluster_endpoint_public_access = true
 #
-#   vpc_id     = module.vpc.vpc_id
-#   subnet_ids = module.vpc.private_subnets
-#
-#   eks_managed_node_groups = {
-#     general = {
-#       desired_size = 1
-#       min_size     = 1
-#       max_size     = 2
-#
-#       instance_types = ["t3.small"]
-#       capacity_type  = "SPOT"
-#     }
-#   }
-#
-#   # Disable resources that are causing permission issues
-#   create_cloudwatch_log_group = false
-#   create_kms_key              = false
-#   cluster_encryption_config   = {}
-#
-#   # Handle any IAM role policy warning
-#   manage_aws_auth_configmap = false
-#
-#   tags = {
-#     Environment = "prod"
-#     Terraform   = "true"
-#   }
+#   vpc_id     = data.aws_vpc.existing.id
+#   subnet_ids = data.aws_subnets.private.ids
 # }
 
 # Existing outputs
@@ -189,5 +207,13 @@ output "cluster_name" {
 
 output "vpc_id" {
   description = "VPC ID"
-  value       = module.vpc.vpc_id
+  value       = data.aws_vpc.existing.id
+}
+
+output "subnets" {
+  description = "List of subnet IDs"
+  value = {
+    private = data.aws_subnets.private.ids
+    public  = data.aws_subnets.public.ids
+  }
 }
