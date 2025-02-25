@@ -1,0 +1,34 @@
+name: AWS Authentication Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  # Allow manual trigger
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # Required for OIDC authentication
+  contents: read    # Required to checkout the code
+
+jobs:
+  aws-auth-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::537124942860:role/github-actions-role
+        aws-region: us-west-1
+        audience: sts.amazonaws.com
+        role-session-name: GitHubActions
+
+    - name: Test AWS authentication
+      run: |
+        aws sts get-caller-identity
+        echo 'Successfully authenticated with AWS'
