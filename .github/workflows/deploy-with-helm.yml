@@ -70,6 +70,9 @@ jobs:
           --arn ${ROLE_ARN} \
           --group system:masters \
           --username github-actions || echo "Role mapping might already exist or failed to create"
+        
+        # Verify the aws-auth ConfigMap
+        kubectl get configmap aws-auth -n kube-system -o yaml || echo "Could not view aws-auth ConfigMap"
 
     - name: Update kube config 
       run: |
@@ -97,9 +100,25 @@ jobs:
         echo "Using Image Tag: $IMAGE_TAG"
         echo "Using release name: portfolio-app"
         
+        # Refresh kubeconfig right before Helm deployment to ensure credentials are current
+        echo "Refreshing kubeconfig before Helm deployment..."
+        aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+        
+        # Verify kubectl can access the cluster
+        kubectl get nodes || { echo "Cannot access cluster nodes"; exit 1; }
+        
+        # Set full image repository path with validation
+        if [ -z "$ECR_REGISTRY" ]; then
+          echo "ERROR: ECR_REGISTRY is empty!"
+          exit 1
+        fi
+        
+        FULL_IMAGE_REPO="${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}"
+        echo "Full image repository: $FULL_IMAGE_REPO"
+        
         # Use Helm to deploy the application
         helm upgrade --install portfolio-app ./kubernetes/helm/app \
-          --set image.repository=$ECR_REGISTRY/${{ env.ECR_REPOSITORY }} \
+          --set image.repository=${FULL_IMAGE_REPO} \
           --set image.tag=$IMAGE_TAG \
           --namespace prod \
           --create-namespace
@@ -118,4 +137,4 @@ jobs:
         fields: repo,message,commit,author,action,eventName,ref,workflow,job,took
       env:
         SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-      if: always()
+      if: always() && (success() || failure())
