@@ -12,10 +12,11 @@ provider "aws" {
   region = var.aws_region
   
   # Explicitly disable EC2 Instance Metadata Service usage for credentials
-  skip_metadata_api_check     = true
-  skip_requesting_account_id  = true
+  skip_metadata_api_check    = true
+  skip_requesting_account_id = true
   
   # These settings help troubleshoot authentication issues
   skip_credentials_validation = true
   skip_region_validation      = true
-} 
+}
+
