@@ -54,6 +54,13 @@ jobs:
         chmod +x kubectl
         sudo mv kubectl /usr/local/bin/
         kubectl version --client
+        
+        # Install aws-iam-authenticator
+        echo "Installing aws-iam-authenticator..."
+        curl -Lo aws-iam-authenticator https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/download/v0.6.11/aws-iam-authenticator_0.6.11_linux_amd64
+        chmod +x ./aws-iam-authenticator
+        sudo mv ./aws-iam-authenticator /usr/local/bin/
+        aws-iam-authenticator version
 
     - name: Install Helm
       run: |
@@ -66,17 +73,67 @@ jobs:
     - name: Connect to EKS
       run: |
         echo "Connecting to EKS..."
-        aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
         
-        # Verify connection
+        # Show current AWS identity
+        echo "Current AWS identity:"
+        aws sts get-caller-identity
+        
+        # Extract the IAM role being used
+        ROLE_ARN=$(aws sts get-caller-identity --query 'Arn' --output text)
+        echo "Role ARN: $ROLE_ARN"
+        
+        # Extract just the role name if it's an assumed role
+        if [[ "$ROLE_ARN" == *":assumed-role/"* ]]; then
+          ROLE_NAME=$(echo $ROLE_ARN | awk -F'/' '{print $2}')
+          ROLE_SESSION=$(echo $ROLE_ARN | awk -F'/' '{print $3}')
+          echo "Assumed Role Name: $ROLE_NAME"
+          echo "Session Name: $ROLE_SESSION"
+          
+          # For documentation purposes, construct the IAM role ARN format needed for aws-auth
+          ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
+          IAM_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
+          echo "IAM Role ARN for aws-auth: $IAM_ROLE_ARN"
+          
+          # Save this for the documentation step
+          echo "IAM_ROLE_ARN=${IAM_ROLE_ARN}" >> $GITHUB_ENV
+        fi
+        
+        # Verify role has EKS access
+        echo "Verifying EKS permissions..."
+        aws eks describe-cluster --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION} || echo "Failed to describe cluster"
+        
+        # Generate kubeconfig using the authenticator directly for debugging
+        echo "Generating kubeconfig..."
+        aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION} --verbose
+        
+        # Print the generated token for debugging (safety: this will not actually print any sensitive info)
+        echo "Debugging token generation:"
+        aws eks get-token --cluster-name ${EKS_CLUSTER_NAME} --region ${AWS_REGION} | grep -v token
+        
+        # Get cluster info
         echo "Verifying EKS connection..."
         kubectl config view
-        kubectl cluster-info
+        KUBECONFIG=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+        echo "Cluster API Server: $KUBECONFIG"
         
-        # Debug permissions
-        echo "Checking EKS permissions..."
-        kubectl auth can-i list pods || echo "Cannot list pods"
-        kubectl auth can-i create deployment || echo "Cannot create deployment"
+        # Pre-authenticate for kubectl
+        echo "Pre-authenticating..."
+        TOKEN=$(aws eks get-token --cluster-name ${EKS_CLUSTER_NAME} --region ${AWS_REGION} | jq -r '.status.token')
+        echo "Token generated (not showing for security)"
+        
+        # Try with token
+        echo "Testing with explicit token..."
+        kubectl --token="${TOKEN}" cluster-info || echo "Explicit token failed"
+        
+        # Try a different approach with environment variables
+        echo "Trying with environment variables..."
+        export AWS_EKS_CLUSTER=${EKS_CLUSTER_NAME}
+        export AWS_REGION=${AWS_REGION}
+        kubectl cluster-info || echo "Failed to connect to cluster"
+        
+        # Check aws-auth configmap
+        echo "Checking aws-auth ConfigMap..."
+        kubectl get configmap aws-auth -n kube-system || echo "Could not get aws-auth ConfigMap"
         
         # Try to list nodes
         echo "Trying to list nodes..."
@@ -134,4 +191,92 @@ jobs:
       run: |
         echo "Deployment completed."
         echo "GitHub SHA: ${{ github.sha }}"
-        echo "ECR URI: ${ECR_URI}" 
+        echo "ECR URI: ${ECR_URI}"
+
+    - name: Create Documentation for EKS Role Binding (if deployment fails)
+      if: failure()
+      run: |
+        echo "It appears that the GitHub Actions role may not have the necessary permissions in your EKS cluster."
+        echo "Here's what you need to do to fix the authentication issue:"
+        echo ""
+        echo "1. On your local machine with admin access to the EKS cluster, run these commands:"
+        echo ""
+        echo "# Get the existing aws-auth ConfigMap"
+        echo "kubectl get configmap aws-auth -n kube-system -o yaml > aws-auth-configmap.yaml"
+        echo ""
+        echo "# Edit the ConfigMap to add the GitHub Actions role"
+        echo "# Add this to the 'mapRoles' section:"
+        echo "  - rolearn: ${IAM_ROLE_ARN:-arn:aws:iam::537124942860:role/github-actions-role}"
+        echo "    username: github-actions"
+        echo "    groups:"
+        echo "      - system:masters"
+        echo ""
+        echo "# Apply the updated ConfigMap"
+        echo "kubectl apply -f aws-auth-configmap.yaml"
+        echo ""
+        echo "2. After updating the ConfigMap, re-run this workflow."
+        echo ""
+        echo "For more information, see the AWS documentation:"
+        echo "https://docs.aws.amazon.com/eks/latest/userguide/add-user-role.html"
+        
+        # Create a documentation file without the heredoc syntax to avoid YAML linting issues
+        mkdir -p ./docs
+        {
+          echo "# Fixing EKS Authentication for GitHub Actions"
+          echo ""
+          echo "If the GitHub Actions workflow fails with an error message like:"
+          echo "> \"the server has asked for the client to provide credentials\""
+          echo ""
+          echo "You need to add the GitHub Actions IAM role to the EKS cluster's authorization ConfigMap."
+          echo ""
+          echo "## Steps to Fix"
+          echo ""
+          echo "1. Make sure you have \`kubectl\` installed and configured to access your EKS cluster."
+          echo ""
+          echo "2. Run the following commands:"
+          echo ""
+          echo "\`\`\`bash"
+          echo "# Get the existing aws-auth ConfigMap"
+          echo "kubectl get configmap aws-auth -n kube-system -o yaml > aws-auth-configmap.yaml"
+          echo ""
+          echo "# Edit aws-auth-configmap.yaml and add the following to the mapRoles section:"
+          echo "# - rolearn: arn:aws:iam::537124942860:role/github-actions-role"
+          echo "#   username: github-actions"
+          echo "#   groups:"
+          echo "#     - system:masters"
+          echo ""
+          echo "# Then apply the updated ConfigMap"
+          echo "kubectl apply -f aws-auth-configmap.yaml"
+          echo "\`\`\`"
+          echo ""
+          echo "3. Verify that the role has been added correctly:"
+          echo ""
+          echo "\`\`\`bash"
+          echo "kubectl get configmap aws-auth -n kube-system -o yaml"
+          echo "\`\`\`"
+          echo ""
+          echo "4. Re-run the GitHub Actions workflow."
+          echo ""
+          echo "## Example aws-auth ConfigMap"
+          echo ""
+          echo "\`\`\`yaml"
+          echo "apiVersion: v1"
+          echo "kind: ConfigMap"
+          echo "metadata:"
+          echo "  name: aws-auth"
+          echo "  namespace: kube-system"
+          echo "data:"
+          echo "  mapRoles: |"
+          echo "    - rolearn: arn:aws:iam::537124942860:role/EKS-NodeInstanceRole"
+          echo "      username: system:node:{{EC2PrivateDNSName}}"
+          echo "      groups:"
+          echo "        - system:bootstrappers"
+          echo "        - system:nodes"
+          echo "    - rolearn: ${IAM_ROLE_ARN:-arn:aws:iam::537124942860:role/github-actions-role}"
+          echo "      username: github-actions"
+          echo "      groups:"
+          echo "        - system:masters"
+          echo "\`\`\`"
+          echo ""
+          echo "For more information, see the [AWS documentation](https://docs.aws.amazon.com/eks/latest/userguide/add-user-role.html)."
+        } > ./docs/eks-auth-fix.md 
