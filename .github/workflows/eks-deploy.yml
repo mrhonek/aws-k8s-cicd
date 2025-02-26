@@ -93,7 +93,10 @@ jobs:
     - name: Deploy App
       run: |
         echo "Deploying application with Helm..."
-        echo "Image: ${ECR_URI}:${IMAGE_TAG}"
+        
+        # Set explicit full image URL
+        FULL_IMAGE_URL="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}"
+        echo "Full image URL: $FULL_IMAGE_URL"
         
         # Create namespace
         kubectl create namespace prod --dry-run=client -o yaml | kubectl apply -f -
@@ -106,10 +109,19 @@ jobs:
         echo "Checking Helm chart values..."
         cat ./kubernetes/helm/app/values.yaml
         
-        # Deploy with Helm using explicit values
+        # Create a temporary values file with our specific overrides
+        cat > ./custom-values.yaml << EOF
+        image:
+          repository: "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
+          tag: "${IMAGE_TAG}"
+        EOF
+        
+        echo "Custom values file:"
+        cat ./custom-values.yaml
+        
+        # Deploy with Helm using values file instead of --set
         helm upgrade --install portfolio-app ./kubernetes/helm/app \
-          --set image.repository="${ECR_URI}" \
-          --set image.tag="${IMAGE_TAG}" \
+          -f ./custom-values.yaml \
           --namespace prod \
           --create-namespace \
           --debug
