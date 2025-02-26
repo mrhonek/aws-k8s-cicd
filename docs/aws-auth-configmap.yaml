@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aws-auth
+  namespace: kube-system
+data:
+  mapRoles: |
+    - rolearn: arn:aws:iam::537124942860:role/github-actions-role
+      username: github-actions
+      groups:
+        - system:masters
+    # Keep your existing node roles below (don't remove them)
+    # The following is just an example - your actual node role might be different
+    - rolearn: arn:aws:iam::537124942860:role/portfolio-cluster-node-role
+      username: system:node:{{EC2PrivateDNSName}}
+      groups:
+        - system:bootstrappers
+        - system:nodes 
