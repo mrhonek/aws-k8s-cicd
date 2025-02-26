@@ -79,63 +79,13 @@ jobs:
       run: |
         echo "Setting up Kubernetes configuration..."
         
-        # Get cluster info
-        CLUSTER_ENDPOINT=$(aws eks describe-cluster --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION} --query "cluster.endpoint" --output text)
-        CERTIFICATE_DATA=$(aws eks describe-cluster --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION} --query "cluster.certificateAuthority.data" --output text)
-        
-        # Create temporary token file
-        mkdir -p $HOME/.aws
-        cat > $HOME/.aws/token << EOF
-        [default]
-        aws_access_key_id=${AWS_ACCESS_KEY_ID}
-        aws_secret_access_key=${AWS_SECRET_ACCESS_KEY}
-        aws_session_token=${AWS_SESSION_TOKEN}
-        region=${AWS_REGION}
-        EOF
-        
-        # Create kubeconfig
-        mkdir -p $HOME/.kube
-        cat > $HOME/.kube/config << EOF
-        apiVersion: v1
-        kind: Config
-        clusters:
-        - cluster:
-            certificate-authority-data: ${CERTIFICATE_DATA}
-            server: ${CLUSTER_ENDPOINT}
-          name: ${EKS_CLUSTER_NAME}
-        contexts:
-        - context:
-            cluster: ${EKS_CLUSTER_NAME}
-            user: aws-iam-authenticator
-          name: ${EKS_CLUSTER_NAME}
-        current-context: ${EKS_CLUSTER_NAME}
-        preferences: {}
-        users:
-        - name: aws-iam-authenticator
-          user:
-            exec:
-              apiVersion: client.authentication.k8s.io/v1beta1
-              command: aws
-              args:
-                - --region
-                - ${AWS_REGION}
-                - eks
-                - get-token
-                - --cluster-name
-                - ${EKS_CLUSTER_NAME}
-              env:
-                - name: AWS_PROFILE
-                  value: "default"
-        EOF
-        
-        # Print configs for debugging
-        echo "AWS Token file created"
-        echo "Kubeconfig created"
+        # Using AWS CLI to update kubeconfig directly
+        aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
         
         # Test connection
         echo "Testing Kubernetes connection..."
         kubectl cluster-info
-        kubectl get nodes || echo "Cannot get nodes yet - will continue with aws-auth ConfigMap setup"
+        kubectl get nodes || echo "Cannot get nodes yet - will continue deployment"
 
     - name: Setup aws-auth ConfigMap
       run: |
@@ -165,11 +115,9 @@ jobs:
 
     - name: Deploy with Helm
       env:
-        ECR_URI: ${{ steps.ecr-repo.outputs.ecr_uri }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
         echo "=========== DEPLOYMENT INFO ==========="
-        echo "ECR URI: $ECR_URI"
         echo "Image tag: $IMAGE_TAG"
         echo "Using namespace: prod"
         echo "======================================"
@@ -181,16 +129,18 @@ jobs:
         echo "Current directory: $(pwd)"
         ls -la ./kubernetes/helm/app || echo "Helm chart directory not found"
         
-        # Print image reference
+        # Get ECR Repository URI
+        ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
         echo "Full image reference: ${ECR_URI}:${IMAGE_TAG}"
         
         # Deploy with Helm
         helm upgrade --install portfolio-app ./kubernetes/helm/app \
           --set image.repository=${ECR_URI} \
           --set image.tag=${IMAGE_TAG} \
-          --namespace prod || echo "Helm deployment failed - see logs above"
+          --namespace prod \
+          --create-namespace
         
-        # Skip these steps if the above failed
+        # Show resources
         kubectl get pods -n prod --ignore-not-found=true || true
         kubectl get services -n prod --ignore-not-found=true || true
 
