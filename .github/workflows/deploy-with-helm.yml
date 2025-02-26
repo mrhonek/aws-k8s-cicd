@@ -42,46 +42,95 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Create aws-auth ConfigMap if needed
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.1' # Or whichever version you prefer
+
+    - name: Install Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: 'v3.12.1' # Or whichever version you prefer
+
+    - name: Set up kubeconfig with direct token authentication
       run: |
-        echo "Checking if github-actions-role is already in the aws-auth ConfigMap..."
-        # Create kubeconfig
-        aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+        echo "Setting up kubeconfig with explicit session token..."
         
-        # Store current identity info
-        ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
-        ROLE_NAME="github-actions-role"
-        ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
+        # Get EKS cluster endpoint
+        CLUSTER_ENDPOINT=$(aws eks describe-cluster --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query "cluster.endpoint" --output text)
+        echo "Cluster endpoint: $CLUSTER_ENDPOINT"
         
-        # Create or update the aws-auth ConfigMap to give the IAM role access to the cluster
-        echo "Adding role ${ROLE_ARN} to EKS cluster auth..."
+        # Get cluster CA certificate
+        CERTIFICATE_DATA=$(aws eks describe-cluster --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query "cluster.certificateAuthority.data" --output text)
+        echo "Retrieved cluster CA certificate"
         
-        # Download eksctl if it doesn't exist
-        if ! command -v eksctl &> /dev/null; then
-          echo "Installing eksctl..."
-          curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
-          sudo mv /tmp/eksctl /usr/local/bin
+        # Get token for kubectl
+        TOKEN=$(aws eks get-token --cluster-name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }} | jq -r '.status.token')
+        echo "Retrieved authentication token"
+        
+        # Set up kubeconfig manually
+        mkdir -p $HOME/.kube
+        cat > $HOME/.kube/config << EOF
+        apiVersion: v1
+        clusters:
+        - cluster:
+            certificate-authority-data: $CERTIFICATE_DATA
+            server: $CLUSTER_ENDPOINT
+          name: ${{ env.EKS_CLUSTER_NAME }}
+        contexts:
+        - context:
+            cluster: ${{ env.EKS_CLUSTER_NAME }}
+            user: aws-eks
+          name: ${{ env.EKS_CLUSTER_NAME }}
+        current-context: ${{ env.EKS_CLUSTER_NAME }}
+        kind: Config
+        preferences: {}
+        users:
+        - name: aws-eks
+          user:
+            token: $TOKEN
+        EOF
+        
+        echo "Kubeconfig created successfully"
+        
+        # Test kubectl connectivity
+        kubectl cluster-info
+        
+        # Verify the ConfigMap exists (will create it if it doesn't)
+        kubectl get configmap aws-auth -n kube-system || {
+          echo "Creating aws-auth ConfigMap..."
+          cat > aws-auth-cm.yaml << EOF
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: aws-auth
+          namespace: kube-system
+        data:
+          mapRoles: |
+            - rolearn: arn:aws:iam::537124942860:role/github-actions-role
+              username: github-actions
+              groups:
+                - system:masters
+        EOF
+          kubectl apply -f aws-auth-cm.yaml
+          echo "aws-auth ConfigMap created"
+        }
+        
+        # Update aws-auth ConfigMap if it exists
+        if kubectl get configmap aws-auth -n kube-system -o yaml | grep -q "mapRoles"; then
+          echo "Updating existing aws-auth ConfigMap..."
+          
+          # Get the current ConfigMap and modify it
+          kubectl get configmap aws-auth -n kube-system -o yaml | sed '/mapRoles/,/kind/!b;/kind/!d;/kind/i\    - rolearn: arn:aws:iam::537124942860:role/github-actions-role\n      username: github-actions\n      groups:\n        - system:masters' > aws-auth-update.yaml
+          
+          # Apply the updated ConfigMap
+          kubectl apply -f aws-auth-update.yaml
+          echo "Updated aws-auth ConfigMap"
         fi
         
-        # Add the role to the aws-auth ConfigMap
-        eksctl create iamidentitymapping \
-          --cluster ${{ env.EKS_CLUSTER_NAME }} \
-          --region ${{ env.AWS_REGION }} \
-          --arn ${ROLE_ARN} \
-          --group system:masters \
-          --username github-actions || echo "Role mapping might already exist or failed to create"
-        
-        # Verify the aws-auth ConfigMap
-        kubectl get configmap aws-auth -n kube-system -o yaml || echo "Could not view aws-auth ConfigMap"
-
-    - name: Update kube config 
-      run: |
-        echo "Updating kubeconfig..."
-        aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
-        
-        echo "Verifying kubeconfig and cluster access..."
-        kubectl config get-contexts
-        kubectl auth can-i list pods || echo "Can't list pods, insufficient permissions"
+        # Display the aws-auth ConfigMap
+        echo "Current aws-auth ConfigMap:"
+        kubectl get configmap aws-auth -n kube-system -o yaml
 
     - name: Debug Environment
       run: |
@@ -90,7 +139,7 @@ jobs:
         echo "Current directory: $(pwd)"
         ls -la ./kubernetes/helm/app || echo "Helm chart directory not found"
         
-    - name: Install/Upgrade Helm Deployment
+    - name: Deploy with Helm
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
@@ -99,13 +148,6 @@ jobs:
         echo "Using ECR Registry: $ECR_REGISTRY"
         echo "Using Image Tag: $IMAGE_TAG"
         echo "Using release name: portfolio-app"
-        
-        # Refresh kubeconfig right before Helm deployment to ensure credentials are current
-        echo "Refreshing kubeconfig before Helm deployment..."
-        aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
-        
-        # Verify kubectl can access the cluster
-        kubectl get nodes || { echo "Cannot access cluster nodes"; exit 1; }
         
         # Set full image repository path with validation
         if [ -z "$ECR_REGISTRY" ]; then
@@ -116,19 +158,21 @@ jobs:
         FULL_IMAGE_REPO="${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}"
         echo "Full image repository: $FULL_IMAGE_REPO"
         
+        # Test authentication again right before Helm deployment
+        echo "Testing Kubernetes authentication again before deployment:"
+        kubectl get nodes
+        kubectl get namespace prod || kubectl create namespace prod
+        
         # Use Helm to deploy the application
+        echo "Deploying with Helm..."
         helm upgrade --install portfolio-app ./kubernetes/helm/app \
           --set image.repository=${FULL_IMAGE_REPO} \
           --set image.tag=$IMAGE_TAG \
-          --namespace prod \
-          --create-namespace
-          
-        # Only continue with verification if deployment succeeds
-        if [ $? -eq 0 ]; then
-          # Wait and verify deployment
-          kubectl rollout status deployment/portfolio-app -n prod --timeout=5m
-          kubectl get all -n prod
-        fi
+          --namespace prod
+        
+        # Verify deployment
+        kubectl get pods -n prod
+        kubectl rollout status deployment/portfolio-app -n prod --timeout=60s
         
     - name: Notify Slack
       uses: 8398a7/action-slack@v3
@@ -137,4 +181,4 @@ jobs:
         fields: repo,message,commit,author,action,eventName,ref,workflow,job,took
       env:
         SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-      if: always() && (success() || failure())
+      if: always()
