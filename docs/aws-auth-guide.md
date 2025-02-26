@@ -135,7 +135,7 @@ For GitHub Actions or other CI/CD systems to access EKS, add their assumed IAM r
 
 ## Scripts in This Repository
 
-We provide several scripts to help manage the aws-auth ConfigMap:
+Here's a few scripts to help manage the aws-auth ConfigMap:
 
 - `apply-aws-auth.sh`: Complete replacement of the aws-auth ConfigMap
 - `fix-aws-auth-simple.sh`: Patches the existing ConfigMap
