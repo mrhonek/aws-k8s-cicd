@@ -74,13 +74,20 @@ jobs:
         chmod 700 get_helm.sh
         ./get_helm.sh
         helm version
+        
+        # Install AWS EKS kubectl auth plugin
+        echo "Installing EKS kubectl auth plugin..."
+        curl -LO "https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/download/v0.6.11/aws-iam-authenticator_0.6.11_linux_amd64"
+        chmod +x ./aws-iam-authenticator_0.6.11_linux_amd64
+        sudo mv ./aws-iam-authenticator_0.6.11_linux_amd64 /usr/local/bin/aws-iam-authenticator
+        aws-iam-authenticator version
 
     - name: Configure kube credentials with temp AWS credentials
       run: |
         echo "Setting up Kubernetes configuration..."
         
-        # Using AWS CLI to update kubeconfig directly
-        aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
+        # Using AWS CLI to update kubeconfig with the AWS IAM authenticator
+        aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION} --auth-type token
         
         # Verify identity being used
         echo "AWS Identity being used:"
@@ -98,11 +105,17 @@ jobs:
         ROLE_ARN=$(aws sts get-caller-identity --query "Arn" --output text)
         echo "Current Role ARN: $ROLE_ARN"
         
-        # Get existing aws-auth ConfigMap or create new one
-        kubectl get configmap aws-auth -n kube-system -o yaml > aws-auth-existing.yaml || echo "ConfigMap does not exist yet"
-        
-        # Create or update aws-auth ConfigMap
-        cat > aws-auth-cm.yaml << EOF
+        # Check if the ConfigMap exists
+        if kubectl get configmap aws-auth -n kube-system &> /dev/null; then
+          echo "aws-auth ConfigMap exists, updating..."
+          # Get the existing ConfigMap
+          kubectl get configmap aws-auth -n kube-system -o yaml > aws-auth-existing.yaml
+          
+          # Extract current mapRoles (if any)
+          grep -A 999 "mapRoles:" aws-auth-existing.yaml > current-map-roles.txt || echo "No existing mapRoles found"
+          
+          # Create a new ConfigMap with both roles
+          cat > aws-auth-cm.yaml << EOF
         apiVersion: v1
         kind: ConfigMap
         metadata:
@@ -119,18 +132,42 @@ jobs:
               groups:
                 - system:masters
         EOF
-        
-        # Try to create or replace the ConfigMap
-        kubectl create configmap aws-auth -n kube-system --from-file=mapRoles=aws-auth-cm.yaml -o yaml --dry-run=client | kubectl apply -f - || \
-        kubectl apply -f aws-auth-cm.yaml
+          
+          # Apply the updated ConfigMap
+          kubectl apply -f aws-auth-cm.yaml
+        else
+          echo "aws-auth ConfigMap does not exist, creating..."
+          
+          # Create a new ConfigMap from scratch
+          cat > aws-auth-cm.yaml << EOF
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: aws-auth
+          namespace: kube-system
+        data:
+          mapRoles: |
+            - rolearn: arn:aws:iam::${ACCOUNT_ID}:role/github-actions-role
+              username: github-actions
+              groups:
+                - system:masters
+            - rolearn: $ROLE_ARN
+              username: github-actions-session
+              groups:
+                - system:masters
+        EOF
+          
+          # Apply the new ConfigMap
+          kubectl apply -f aws-auth-cm.yaml
+        fi
         
         # Wait for ConfigMap to propagate
         echo "Waiting for aws-auth ConfigMap to propagate..."
-        sleep 10
+        sleep 15
         
         # Verify connection now
         echo "Verifying Kubernetes access after ConfigMap update..."
-        kubectl get nodes
+        kubectl get nodes || echo "Could not access cluster nodes yet. Continuing..."
 
     - name: Deploy with Helm
       env:
@@ -151,6 +188,10 @@ jobs:
         # Get ECR Repository URI
         ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
         echo "Full image reference: ${ECR_URI}:${IMAGE_TAG}"
+        
+        # Before Helm deployment, test cluster connectivity again
+        echo "Testing Kubernetes connection before Helm deployment:"
+        kubectl cluster-info
         
         # Deploy with Helm
         helm upgrade --install portfolio-app ./kubernetes/helm/app \
