@@ -141,6 +141,32 @@ Here's a few scripts to help manage the aws-auth ConfigMap:
 - `fix-aws-auth-simple.sh`: Patches the existing ConfigMap
 - `eks-auth-diagnostic.sh`: Diagnoses authentication issues
 
+## Health Checks and Notifications
+
+This repository includes comprehensive health check monitoring for your EKS application:
+
+### Automatic Health Monitoring
+
+- **Scheduled Health Checks**: The `health-check.yml` workflow runs every 30 minutes to verify:
+  - Pod status (running/failing)
+  - HTTP response from the application
+  - Overall application health
+
+### Slack Notifications
+
+The CI/CD pipeline sends detailed Slack notifications for:
+
+1. **Image Building**: When a new Docker image is built and pushed to ECR
+2. **Deployment Status**: When the application is deployed to EKS (includes the LoadBalancer URL)
+3. **Health Status**: Regular health check reports showing pod status and HTTP response
+
+### Manual Triggering
+
+You can manually trigger the health check at any time by:
+1. Going to the GitHub repository Actions tab
+2. Selecting the "Application Health Check" workflow
+3. Clicking "Run workflow"
+
 ## References
 
 - [AWS Documentation: Managing users or IAM roles for your cluster](https://docs.aws.amazon.com/eks/latest/userguide/add-user-role.html)

@@ -1,0 +1,174 @@
+name: Application Health Check
+
+on:
+  schedule:
+    # Run every 30 minutes
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+
+env:
+  AWS_REGION: us-west-1
+  NAMESPACE: prod
+  APP_NAME: portfolio-app
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  health-check:
+    name: Check Application Health
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::537124942860:role/github-actions-role
+        aws-region: us-west-1
+        audience: sts.amazonaws.com
+        role-session-name: GitHubActions
+
+    - name: Connect to EKS Cluster
+      run: |
+        aws eks update-kubeconfig --name portfolio-cluster --region $AWS_REGION
+        kubectl get nodes
+
+    - name: Get Application URL
+      id: get-url
+      run: |
+        LOADBALANCER_URL=$(kubectl get svc -n $NAMESPACE $APP_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+        if [ -z "$LOADBALANCER_URL" ]; then
+          echo "::error::Could not retrieve LoadBalancer URL"
+          exit 1
+        fi
+        echo "APP_URL=http://$LOADBALANCER_URL" >> $GITHUB_ENV
+        echo "Using URL: http://$LOADBALANCER_URL"
+
+    - name: Check Pod Status
+      id: check-pods
+      run: |
+        PODS_RUNNING=$(kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=$APP_NAME -o jsonpath='{.items[*].status.phase}' | tr ' ' '\n' | grep -c "Running" || echo "0")
+        TOTAL_PODS=$(kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=$APP_NAME -o jsonpath='{.items[*].status.phase}' | tr ' ' '\n' | wc -l)
+        
+        echo "PODS_RUNNING=$PODS_RUNNING" >> $GITHUB_ENV
+        echo "TOTAL_PODS=$TOTAL_PODS" >> $GITHUB_ENV
+        
+        if [ "$PODS_RUNNING" -eq "$TOTAL_PODS" ] && [ "$TOTAL_PODS" -gt 0 ]; then
+          echo "POD_STATUS=✅ All pods are running ($PODS_RUNNING/$TOTAL_PODS)" >> $GITHUB_ENV
+          echo "All pods are running: $PODS_RUNNING/$TOTAL_PODS"
+        else
+          echo "POD_STATUS=⚠️ Not all pods are running ($PODS_RUNNING/$TOTAL_PODS)" >> $GITHUB_ENV
+          echo "Not all pods are running: $PODS_RUNNING/$TOTAL_PODS"
+        fi
+        
+        # Get detailed pod info for logs
+        kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=$APP_NAME -o wide
+
+    - name: Check Application Health
+      id: check-health
+      run: |
+        # Try to contact the application
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.APP_URL }} || echo "Failed")
+        echo "HTTP_STATUS=$HTTP_STATUS" >> $GITHUB_ENV
+        
+        if [ "$HTTP_STATUS" == "200" ]; then
+          echo "APP_HEALTH=✅ Application is responding with HTTP 200" >> $GITHUB_ENV
+          echo "Application is healthy (HTTP 200)"
+        elif [ "$HTTP_STATUS" == "Failed" ]; then
+          echo "APP_HEALTH=❌ Failed to connect to application" >> $GITHUB_ENV
+          echo "Failed to connect to application"
+        else
+          echo "APP_HEALTH=⚠️ Application responded with HTTP $HTTP_STATUS" >> $GITHUB_ENV
+          echo "Application returned HTTP $HTTP_STATUS"
+        fi
+
+    - name: Send Health Report to Slack
+      uses: slackapi/slack-github-action@v1.25.0
+      with:
+        payload: |
+          {
+            "text": "Application Health Check: ${{ env.APP_HEALTH }}",
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "📊 Application Health Report",
+                  "emoji": true
+                }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Application:*\n${{ env.APP_NAME }}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Environment:*\n${{ env.NAMESPACE }}"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Pod Status:*\n${{ env.POD_STATUS }}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*HTTP Status:*\n${{ env.APP_HEALTH }}"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*URL:* <${{ env.APP_URL }}|${{ env.APP_URL }}>"
+                }
+              },
+              {
+                "type": "context",
+                "elements": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "Last checked: <!date^${{ github.event.schedule == '' && github.run_id || '' }}^{date_short} at {time}|${{ github.event.schedule == '' && github.run_id || 'now' }}>"
+                  }
+                ]
+              },
+              {
+                "type": "actions",
+                "elements": [
+                  {
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "View Application",
+                      "emoji": true
+                    },
+                    "url": "${{ env.APP_URL }}"
+                  },
+                  {
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "View Workflow Run",
+                      "emoji": true
+                    },
+                    "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                  }
+                ]
+              }
+            ]
+          }
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK 

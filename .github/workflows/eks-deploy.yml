@@ -186,12 +186,19 @@ jobs:
         # Check deployment
         kubectl get pods -n prod
         kubectl get services -n prod
+        
+        # Get LoadBalancer URL for Slack notification
+        echo "Getting LoadBalancer URL..."
+        LOADBALANCER_URL=$(kubectl get svc -n prod portfolio-app -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+        echo "LoadBalancer URL: $LOADBALANCER_URL"
+        echo "APP_URL=http://$LOADBALANCER_URL" >> $GITHUB_ENV
 
     - name: Notify Result
       run: |
         echo "Deployment completed."
         echo "GitHub SHA: ${{ github.sha }}"
         echo "ECR URI: ${ECR_URI}"
+        echo "App URL: ${{ env.APP_URL }}"
         
     # New steps for Slack notifications
     - name: Notify Slack on Success
@@ -225,6 +232,13 @@ jobs:
                 }
               },
               {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*🌐 Application URL:* <${{ env.APP_URL }}|${{ env.APP_URL }}>"
+                }
+              },
+              {
                 "type": "actions",
                 "elements": [
                   {
@@ -235,6 +249,15 @@ jobs:
                       "emoji": true
                     },
                     "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                  },
+                  {
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "Open Application",
+                      "emoji": true
+                    },
+                    "url": "${{ env.APP_URL }}"
                   }
                 ]
               }

@@ -110,6 +110,13 @@ jobs:
                 }
               },
               {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "🔄 *Next Steps:* This image will be automatically deployed to EKS. After deployment, your application will be accessible at the LoadBalancer URL (see deployment notification for details)."
+                }
+              },
+              {
                 "type": "actions",
                 "elements": [
                   {
