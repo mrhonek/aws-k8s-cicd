@@ -1,0 +1,125 @@
+name: EKS Direct Deployment
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-west-1
+  ECR_REPOSITORY: portfolio-app
+  EKS_CLUSTER_NAME: portfolio-cluster
+  ACCOUNT_ID: "537124942860"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to EKS
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::537124942860:role/github-actions-role
+        aws-region: us-west-1
+        audience: sts.amazonaws.com
+        role-session-name: GitHubActions
+
+    - name: Debug AWS Role and Credentials
+      run: |
+        echo "Checking AWS identity..."
+        aws sts get-caller-identity
+        AWS_ROLE=$(aws sts get-caller-identity --query "Arn" --output text)
+        echo "Current AWS Role: $AWS_ROLE"
+        
+        # List current IAM permissions
+        echo "Checking IAM permissions..."
+        aws iam list-attached-role-policies --role-name github-actions-role || echo "Could not list role policies"
+        
+        # Check EKS access
+        echo "Checking EKS access..."
+        aws eks list-clusters
+
+    - name: Setup kubectl
+      run: |
+        echo "Installing kubectl..."
+        curl -LO "https://dl.k8s.io/release/v1.28.1/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+        kubectl version --client
+
+    - name: Install Helm
+      run: |
+        echo "Installing Helm..."
+        curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        chmod 700 get_helm.sh
+        ./get_helm.sh
+        helm version
+
+    - name: Connect to EKS
+      run: |
+        echo "Connecting to EKS..."
+        aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
+        
+        # Verify connection
+        echo "Verifying EKS connection..."
+        kubectl config view
+        kubectl cluster-info
+        
+        # Debug permissions
+        echo "Checking EKS permissions..."
+        kubectl auth can-i list pods || echo "Cannot list pods"
+        kubectl auth can-i create deployment || echo "Cannot create deployment"
+        
+        # Try to list nodes
+        echo "Trying to list nodes..."
+        kubectl get nodes || echo "Failed to get nodes"
+
+    - name: Manually Save ECR Info
+      run: |
+        echo "Setting up ECR info..."
+        ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
+        echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
+        echo "IMAGE_TAG=${{ github.sha }}" >> $GITHUB_ENV
+        echo "Full image reference: ${ECR_URI}:${{ github.sha }}"
+
+    - name: Deploy App
+      run: |
+        echo "Deploying application with Helm..."
+        echo "Image: ${ECR_URI}:${IMAGE_TAG}"
+        
+        # Create namespace
+        kubectl create namespace prod --dry-run=client -o yaml | kubectl apply -f -
+        
+        # Check Helm chart directory
+        echo "Checking Helm chart directory..."
+        ls -la ./kubernetes/helm/app
+        
+        # Check Helm chart values
+        echo "Checking Helm chart values..."
+        cat ./kubernetes/helm/app/values.yaml
+        
+        # Deploy with Helm using explicit values
+        helm upgrade --install portfolio-app ./kubernetes/helm/app \
+          --set image.repository="${ECR_URI}" \
+          --set image.tag="${IMAGE_TAG}" \
+          --namespace prod \
+          --create-namespace \
+          --debug
+        
+        # Check deployment
+        kubectl get pods -n prod
+        kubectl get services -n prod
+
+    - name: Notify Result
+      run: |
+        echo "Deployment completed."
+        echo "GitHub SHA: ${{ github.sha }}"
+        echo "ECR URI: ${ECR_URI}" 
