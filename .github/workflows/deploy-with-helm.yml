@@ -82,14 +82,24 @@ jobs:
         # Using AWS CLI to update kubeconfig directly
         aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
         
+        # Verify identity being used
+        echo "AWS Identity being used:"
+        aws sts get-caller-identity
+        
         # Test connection
         echo "Testing Kubernetes connection..."
         kubectl cluster-info
-        kubectl get nodes || echo "Cannot get nodes yet - will continue deployment"
 
     - name: Setup aws-auth ConfigMap
       run: |
         echo "Setting up aws-auth ConfigMap..."
+        
+        # Get current AWS identity information
+        ROLE_ARN=$(aws sts get-caller-identity --query "Arn" --output text)
+        echo "Current Role ARN: $ROLE_ARN"
+        
+        # Get existing aws-auth ConfigMap or create new one
+        kubectl get configmap aws-auth -n kube-system -o yaml > aws-auth-existing.yaml || echo "ConfigMap does not exist yet"
         
         # Create or update aws-auth ConfigMap
         cat > aws-auth-cm.yaml << EOF
@@ -104,14 +114,23 @@ jobs:
               username: github-actions
               groups:
                 - system:masters
+            - rolearn: $ROLE_ARN
+              username: github-actions-session
+              groups:
+                - system:masters
         EOF
         
-        # Try to apply the ConfigMap
-        kubectl apply -f aws-auth-cm.yaml || echo "Could not apply aws-auth ConfigMap - continuing anyway"
+        # Try to create or replace the ConfigMap
+        kubectl create configmap aws-auth -n kube-system --from-file=mapRoles=aws-auth-cm.yaml -o yaml --dry-run=client | kubectl apply -f - || \
+        kubectl apply -f aws-auth-cm.yaml
+        
+        # Wait for ConfigMap to propagate
+        echo "Waiting for aws-auth ConfigMap to propagate..."
+        sleep 10
         
         # Verify connection now
         echo "Verifying Kubernetes access after ConfigMap update..."
-        kubectl get nodes || echo "Still cannot get nodes - proceeding with deployment anyway"
+        kubectl get nodes
 
     - name: Deploy with Helm
       env:
