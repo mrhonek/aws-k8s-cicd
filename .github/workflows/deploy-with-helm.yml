@@ -47,6 +47,50 @@ jobs:
         echo "Listing EKS clusters..."
         aws eks list-clusters
 
+    - name: Install eksctl and kubectl
+      run: |
+        # Install kubectl
+        echo "Installing kubectl..."
+        curl -LO "https://dl.k8s.io/release/v1.28.1/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+        kubectl version --client
+        
+        # Install eksctl
+        echo "Installing eksctl..."
+        curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+        sudo mv /tmp/eksctl /usr/local/bin
+        eksctl version
+
+    - name: Install Helm
+      run: |
+        echo "Installing Helm..."
+        curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        chmod 700 get_helm.sh
+        ./get_helm.sh
+        helm version
+
+    - name: Configure EKS Cluster Access
+      run: |
+        echo "Configuring EKS Cluster access..."
+        
+        # Get current credentials
+        AWS_CREDS=$(aws sts assume-role --role-arn arn:aws:iam::${ACCOUNT_ID}:role/github-actions-role --role-session-name GithubActionsEKSAccess --output json)
+        export AWS_ACCESS_KEY_ID=$(echo $AWS_CREDS | jq -r '.Credentials.AccessKeyId')
+        export AWS_SECRET_ACCESS_KEY=$(echo $AWS_CREDS | jq -r '.Credentials.SecretAccessKey')
+        export AWS_SESSION_TOKEN=$(echo $AWS_CREDS | jq -r '.Credentials.SessionToken')
+        
+        # Configure kubectl using eksctl
+        eksctl utils write-kubeconfig --cluster=${EKS_CLUSTER_NAME} --region=${AWS_REGION} --set-kubeconfig-context=true
+        
+        # Verify identity
+        echo "Verifying AWS identity..."
+        aws sts get-caller-identity
+        
+        # Test connection
+        echo "Testing Kubernetes connection..."
+        kubectl cluster-info
+
     - name: Get ECR Repository URI
       id: ecr-repo
       run: |
@@ -61,114 +105,6 @@ jobs:
         aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
         echo "ECR login successful"
 
-    - name: Setup kubectl and Helm
-      run: |
-        echo "Installing kubectl..."
-        curl -LO "https://dl.k8s.io/release/v1.28.1/bin/linux/amd64/kubectl"
-        chmod +x kubectl
-        sudo mv kubectl /usr/local/bin/
-        kubectl version --client
-        
-        echo "Installing Helm..."
-        curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-        chmod 700 get_helm.sh
-        ./get_helm.sh
-        helm version
-        
-        # Install AWS EKS kubectl auth plugin
-        echo "Installing EKS kubectl auth plugin..."
-        curl -LO "https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/download/v0.6.11/aws-iam-authenticator_0.6.11_linux_amd64"
-        chmod +x ./aws-iam-authenticator_0.6.11_linux_amd64
-        sudo mv ./aws-iam-authenticator_0.6.11_linux_amd64 /usr/local/bin/aws-iam-authenticator
-        aws-iam-authenticator version
-
-    - name: Configure kube credentials with temp AWS credentials
-      run: |
-        echo "Setting up Kubernetes configuration..."
-        
-        # Using AWS CLI to update kubeconfig with the AWS IAM authenticator
-        aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION} --auth-type token
-        
-        # Verify identity being used
-        echo "AWS Identity being used:"
-        aws sts get-caller-identity
-        
-        # Test connection
-        echo "Testing Kubernetes connection..."
-        kubectl cluster-info
-
-    - name: Setup aws-auth ConfigMap
-      run: |
-        echo "Setting up aws-auth ConfigMap..."
-        
-        # Get current AWS identity information
-        ROLE_ARN=$(aws sts get-caller-identity --query "Arn" --output text)
-        echo "Current Role ARN: $ROLE_ARN"
-        
-        # Check if the ConfigMap exists
-        if kubectl get configmap aws-auth -n kube-system &> /dev/null; then
-          echo "aws-auth ConfigMap exists, updating..."
-          # Get the existing ConfigMap
-          kubectl get configmap aws-auth -n kube-system -o yaml > aws-auth-existing.yaml
-          
-          # Extract current mapRoles (if any)
-          grep -A 999 "mapRoles:" aws-auth-existing.yaml > current-map-roles.txt || echo "No existing mapRoles found"
-          
-          # Create a new ConfigMap with both roles
-          cat > aws-auth-cm.yaml << EOF
-        apiVersion: v1
-        kind: ConfigMap
-        metadata:
-          name: aws-auth
-          namespace: kube-system
-        data:
-          mapRoles: |
-            - rolearn: arn:aws:iam::${ACCOUNT_ID}:role/github-actions-role
-              username: github-actions
-              groups:
-                - system:masters
-            - rolearn: $ROLE_ARN
-              username: github-actions-session
-              groups:
-                - system:masters
-        EOF
-          
-          # Apply the updated ConfigMap
-          kubectl apply -f aws-auth-cm.yaml
-        else
-          echo "aws-auth ConfigMap does not exist, creating..."
-          
-          # Create a new ConfigMap from scratch
-          cat > aws-auth-cm.yaml << EOF
-        apiVersion: v1
-        kind: ConfigMap
-        metadata:
-          name: aws-auth
-          namespace: kube-system
-        data:
-          mapRoles: |
-            - rolearn: arn:aws:iam::${ACCOUNT_ID}:role/github-actions-role
-              username: github-actions
-              groups:
-                - system:masters
-            - rolearn: $ROLE_ARN
-              username: github-actions-session
-              groups:
-                - system:masters
-        EOF
-          
-          # Apply the new ConfigMap
-          kubectl apply -f aws-auth-cm.yaml
-        fi
-        
-        # Wait for ConfigMap to propagate
-        echo "Waiting for aws-auth ConfigMap to propagate..."
-        sleep 15
-        
-        # Verify connection now
-        echo "Verifying Kubernetes access after ConfigMap update..."
-        kubectl get nodes || echo "Could not access cluster nodes yet. Continuing..."
-
     - name: Deploy with Helm
       env:
         IMAGE_TAG: ${{ github.sha }}
@@ -178,31 +114,29 @@ jobs:
         echo "Using namespace: prod"
         echo "======================================"
         
-        # Create namespace
-        kubectl create namespace prod --dry-run=client -o yaml | kubectl apply -f -
-        
-        # Debug info before Helm
-        echo "Current directory: $(pwd)"
-        ls -la ./kubernetes/helm/app || echo "Helm chart directory not found"
-        
         # Get ECR Repository URI
         ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
         echo "Full image reference: ${ECR_URI}:${IMAGE_TAG}"
         
-        # Before Helm deployment, test cluster connectivity again
-        echo "Testing Kubernetes connection before Helm deployment:"
+        # Check Helm chart directory
+        ls -la ./kubernetes/helm/app || echo "Helm chart directory not found"
+        
+        # Create namespace
+        kubectl create namespace prod --dry-run=client -o yaml | kubectl apply -f -
+        
+        # Verify connection once more
         kubectl cluster-info
         
-        # Deploy with Helm
+        # Deploy with Helm 
         helm upgrade --install portfolio-app ./kubernetes/helm/app \
           --set image.repository=${ECR_URI} \
           --set image.tag=${IMAGE_TAG} \
           --namespace prod \
           --create-namespace
         
-        # Show resources
-        kubectl get pods -n prod --ignore-not-found=true || true
-        kubectl get services -n prod --ignore-not-found=true || true
+        # Show results
+        kubectl get pods -n prod --ignore-not-found=true
+        kubectl get services -n prod --ignore-not-found=true
 
     - name: Notify Slack
       uses: 8398a7/action-slack@v3
