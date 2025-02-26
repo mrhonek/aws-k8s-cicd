@@ -9,7 +9,7 @@ env:
   AWS_REGION: us-west-1
   ECR_REPOSITORY: portfolio-app
   EKS_CLUSTER_NAME: portfolio-cluster
-  ACCOUNT_ID: "537124942860"
+  ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
 
 permissions:
   id-token: write
@@ -27,7 +27,7 @@ jobs:
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: arn:aws:iam::537124942860:role/github-actions-role
+        role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
         aws-region: us-west-1
         audience: sts.amazonaws.com
         role-session-name: GitHubActions
@@ -323,7 +323,7 @@ jobs:
         echo ""
         echo "# Edit the ConfigMap to add the GitHub Actions role"
         echo "# Add this to the 'mapRoles' section:"
-        echo "  - rolearn: ${IAM_ROLE_ARN:-arn:aws:iam::537124942860:role/github-actions-role}"
+        echo "  - rolearn: ${IAM_ROLE_ARN:-arn:aws:iam::\${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role}"
         echo "    username: github-actions"
         echo "    groups:"
         echo "      - system:masters"
@@ -357,7 +357,7 @@ jobs:
           echo "kubectl get configmap aws-auth -n kube-system -o yaml > aws-auth-configmap.yaml"
           echo ""
           echo "# Edit aws-auth-configmap.yaml and add the following to the mapRoles section:"
-          echo "# - rolearn: arn:aws:iam::537124942860:role/github-actions-role"
+          echo "# - rolearn: arn:aws:iam::\${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role"
           echo "#   username: github-actions"
           echo "#   groups:"
           echo "#     - system:masters"
@@ -384,12 +384,12 @@ jobs:
           echo "  namespace: kube-system"
           echo "data:"
           echo "  mapRoles: |"
-          echo "    - rolearn: arn:aws:iam::537124942860:role/EKS-NodeInstanceRole"
+          echo "    - rolearn: arn:aws:iam::\${{ secrets.AWS_ACCOUNT_ID }}:role/EKS-NodeInstanceRole"
           echo "      username: system:node:{{EC2PrivateDNSName}}"
           echo "      groups:"
           echo "        - system:bootstrappers"
           echo "        - system:nodes"
-          echo "    - rolearn: ${IAM_ROLE_ARN:-arn:aws:iam::537124942860:role/github-actions-role}"
+          echo "    - rolearn: ${IAM_ROLE_ARN:-arn:aws:iam::\${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role}"
           echo "      username: github-actions"
           echo "      groups:"
           echo "        - system:masters"

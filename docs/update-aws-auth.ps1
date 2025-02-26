@@ -1,5 +1,5 @@
-# Set variables
-$GITHUB_ROLE = "arn:aws:iam::537124942860:role/github-actions-role"
+# Set variables - REPLACE THESE WITH YOUR VALUES
+$GITHUB_ROLE = "arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_GITHUB_ROLE_NAME"
 $GITHUB_USERNAME = "github-actions"
 
 # Get the existing aws-auth ConfigMap

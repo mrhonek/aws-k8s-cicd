@@ -1,19 +1,19 @@
 #!/bin/bash
 set -e
 
-# Set variables
-GITHUB_ROLE="arn:aws:iam::537124942860:role/github-actions-role"
-GITHUB_USERNAME="github-actions"
+# Variables - REPLACE THESE WITH YOUR VALUES
+GITHUB_ROLE="arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_GITHUB_ROLE_NAME"
+CLUSTER_NAME="YOUR_CLUSTER_NAME"
+REGION="YOUR_REGION"
 
-# Get the existing aws-auth ConfigMap
-echo "Getting existing aws-auth ConfigMap..."
-kubectl get configmap aws-auth -n kube-system -o yaml > existing-aws-auth.yaml
+# Configure kubectl
+aws eks update-kubeconfig --name $CLUSTER_NAME --region $REGION
 
-# Extract only the existing mapRoles section (without the leading spaces)
-EXISTING_MAP_ROLES=$(grep -A 1000 "mapRoles:" existing-aws-auth.yaml | tail -n +2 | sed 's/^  //')
+# Get current aws-auth ConfigMap
+kubectl get configmap aws-auth -n kube-system -o yaml > current-aws-auth.yaml
 
-# Create a temporary file with the new ConfigMap
-cat > new-aws-auth.yaml << EOF
+# Create a temporary file with updated auth
+cat > aws-auth-update.yaml << EOF
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -22,21 +22,15 @@ metadata:
 data:
   mapRoles: |
     - rolearn: ${GITHUB_ROLE}
-      username: ${GITHUB_USERNAME}
+      username: github-actions
       groups:
         - system:masters
-${EXISTING_MAP_ROLES}
 EOF
 
-echo "Generated new ConfigMap:"
-cat new-aws-auth.yaml
+# Apply the ConfigMap
+kubectl apply -f aws-auth-update.yaml
 
-# Apply the new ConfigMap
-echo "Applying updated aws-auth ConfigMap..."
-kubectl apply -f new-aws-auth.yaml
-
-echo "ConfigMap updated successfully!"
-echo "Verifying aws-auth ConfigMap:"
+# Verify
 kubectl get configmap aws-auth -n kube-system -o yaml
 
 echo "Done!" 

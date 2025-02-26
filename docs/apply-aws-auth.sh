@@ -7,26 +7,25 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
-# Variables
-CLUSTER_NAME="portfolio-cluster"
-REGION="us-west-1"
-GITHUB_ROLE="arn:aws:iam::537124942860:role/github-actions-role"
-GITHUB_USERNAME="github-actions"
-NODE_ROLE="arn:aws:iam::537124942860:role/general-eks-node-group-20250225163213163000000001"
+# Variables - REPLACE THESE WITH YOUR VALUES
+CLUSTER_NAME="YOUR_CLUSTER_NAME"
+REGION="YOUR_REGION"
+GITHUB_ROLE="arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_GITHUB_ROLE_NAME"
+NODE_ROLE="arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_NODE_ROLE_NAME"
 
-echo -e "${CYAN}=== EKS Auth ConfigMap Direct Apply Script ===${NC}"
-echo -e "This script will apply a complete aws-auth ConfigMap for EKS authentication.\n"
+echo -e "${CYAN}=== AWS Auth ConfigMap Application Script ===${NC}"
+echo -e "This script will apply the aws-auth ConfigMap to your EKS cluster."
 
-# Configure kubectl for EKS
-echo -e "\n${CYAN}Configuring kubectl for EKS...${NC}"
+# Configure kubectl
+echo -e "\n${CYAN}Configuring kubectl...${NC}"
 aws eks update-kubeconfig --name $CLUSTER_NAME --region $REGION || {
-    echo -e "${RED}Error: Could not update kubeconfig. Check if the cluster exists.${NC}"
-    exit 1
+  echo -e "${RED}Error: Failed to update kubeconfig${NC}"
+  exit 1
 }
 
-# Create a complete aws-auth ConfigMap file
+# Create aws-auth ConfigMap YAML
 echo -e "\n${CYAN}Creating aws-auth ConfigMap...${NC}"
-cat > aws-auth-complete.yaml << EOF
+cat > aws-auth-configmap.yaml << EOF
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -35,7 +34,7 @@ metadata:
 data:
   mapRoles: |
     - rolearn: ${GITHUB_ROLE}
-      username: ${GITHUB_USERNAME}
+      username: github-actions
       groups:
         - system:masters
     - rolearn: ${NODE_ROLE}
@@ -45,25 +44,16 @@ data:
         - system:nodes
 EOF
 
-# Display the ConfigMap
-echo -e "\n${CYAN}Generated aws-auth ConfigMap:${NC}"
-cat aws-auth-complete.yaml
-
 # Apply the ConfigMap
 echo -e "\n${CYAN}Applying aws-auth ConfigMap...${NC}"
-kubectl apply -f aws-auth-complete.yaml
+kubectl apply -f aws-auth-configmap.yaml || {
+  echo -e "${RED}Error: Failed to apply aws-auth ConfigMap${NC}"
+  exit 1
+}
 
-# Verify the ConfigMap was updated
+# Verify the ConfigMap
 echo -e "\n${CYAN}Verifying aws-auth ConfigMap...${NC}"
 kubectl get configmap aws-auth -n kube-system -o yaml
 
-# Additional verification steps
-echo -e "\n${CYAN}Testing kubernetes access with current credentials...${NC}"
-kubectl get nodes || echo -e "${RED}Cannot access nodes with current credentials${NC}"
-
-echo -e "\n${CYAN}Testing access for github-actions user...${NC}"
-kubectl auth can-i list pods --as=github-actions || echo -e "${RED}github-actions user cannot list pods${NC}"
-
-echo -e "\n${GREEN}aws-auth ConfigMap has been updated!${NC}"
-echo -e "GitHub Actions should now be able to authenticate to the EKS cluster."
-echo -e "Run the GitHub Actions workflow again to test." 
+echo -e "\n${GREEN}aws-auth ConfigMap has been applied successfully!${NC}"
+echo -e "GitHub Actions should now be able to authenticate to the EKS cluster." 

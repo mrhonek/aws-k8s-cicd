@@ -7,10 +7,10 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
-# Variables
-CLUSTER_NAME="portfolio-cluster"
-REGION="us-west-1"
-GITHUB_ROLE="arn:aws:iam::537124942860:role/github-actions-role"
+# Variables - REPLACE THESE WITH YOUR VALUES
+CLUSTER_NAME="YOUR_CLUSTER_NAME"
+REGION="YOUR_REGION"
+GITHUB_ROLE="arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_GITHUB_ROLE_NAME"
 GITHUB_USERNAME="github-actions"
 
 echo -e "${CYAN}=== EKS Auth ConfigMap Fix Script (Simple Version) ===${NC}"
@@ -30,11 +30,11 @@ echo -e "\n${CYAN}Updating aws-auth ConfigMap with kubectl patch...${NC}"
 cat > aws-auth-patch.yaml << EOF
 data:
   mapRoles: |
-    - rolearn: arn:aws:iam::537124942860:role/github-actions-role
+    - rolearn: arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_GITHUB_ROLE_NAME
       username: github-actions
       groups:
         - system:masters
-    - rolearn: arn:aws:iam::537124942860:role/general-eks-node-group-20250225163213163000000001
+    - rolearn: arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_NODE_ROLE_NAME
       username: system:node:{{EC2PrivateDNSName}}
       groups:
         - system:bootstrappers

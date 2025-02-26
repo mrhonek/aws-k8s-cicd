@@ -1,7 +1,7 @@
 replicaCount: 2
 
 image:
-  repository: "537124942860.dkr.ecr.us-west-1.amazonaws.com/portfolio-app"
+  repository: "YOUR_ACCOUNT_ID.dkr.ecr.YOUR_REGION.amazonaws.com/YOUR_REPOSITORY_NAME"
   tag: "latest"
   pullPolicy: IfNotPresent
 

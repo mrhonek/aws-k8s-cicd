@@ -5,13 +5,13 @@ metadata:
   namespace: kube-system
 data:
   mapRoles: |
-    - rolearn: arn:aws:iam::537124942860:role/github-actions-role
+    - rolearn: arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_GITHUB_ROLE_NAME
       username: github-actions
       groups:
         - system:masters
     # Keep your existing node roles below (don't remove them)
     # The following is just an example - your actual node role might be different
-    - rolearn: arn:aws:iam::537124942860:role/portfolio-cluster-node-role
+    - rolearn: arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_NODE_ROLE_NAME
       username: system:node:{{EC2PrivateDNSName}}
       groups:
         - system:bootstrappers

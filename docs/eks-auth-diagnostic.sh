@@ -1,75 +1,132 @@
 #!/bin/bash
 set -e
 
-# EKS Authentication Diagnostic Script
+# Colors for output
+CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[0;33m'
+NC='\033[0m' # No Color
 
-# 1. Check AWS CLI configuration
-echo -e "\033[0;36m=== AWS CLI Configuration ===\033[0m"
-aws sts get-caller-identity
+# Variables - REPLACE THESE WITH YOUR VALUES
+CLUSTER_NAME="YOUR_CLUSTER_NAME"
+REGION="YOUR_REGION"
+GITHUB_ROLE="arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_GITHUB_ROLE_NAME"
+GITHUB_USERNAME="github-actions"
 
-# 2. Check EKS access
-echo -e "\n\033[0;36m=== EKS Access ===\033[0m"
-aws eks list-clusters
-CLUSTER_NAME="portfolio-cluster"
-REGION="us-west-1"
+echo -e "${CYAN}=== EKS Authentication Diagnostic Tool ===${NC}"
+echo -e "This script will help diagnose EKS authentication issues for GitHub Actions.\n"
 
-# 3. Check authentication mode
-echo -e "\n\033[0;36m=== EKS Cluster Authentication Mode ===\033[0m"
-AUTH_MODE=$(aws eks describe-cluster --name $CLUSTER_NAME --region $REGION --query 'cluster.accessConfig.authenticationMode' --output text)
-echo "Authentication Mode: $AUTH_MODE"
-
-# 4. Verify the GitHub Actions role
-echo -e "\n\033[0;36m=== GitHub Actions Role ===\033[0m"
-GITHUB_ROLE="arn:aws:iam::537124942860:role/github-actions-role"
-ROLE_NAME="github-actions-role"
-echo "Checking IAM role: $GITHUB_ROLE"
-if aws iam get-role --role-name $ROLE_NAME > /dev/null 2>&1; then
-    aws iam get-role --role-name $ROLE_NAME --query 'Role.[RoleName, Arn, CreateDate]' --output text
-else
-    echo "Error: Could not find role $ROLE_NAME"
+# Verify AWS CLI is installed
+if ! command -v aws &> /dev/null; then
+    echo -e "${RED}Error: AWS CLI is not installed.${NC}"
+    exit 1
 fi
 
-# 5. Check AWS Auth ConfigMap
-echo -e "\n\033[0;36m=== AWS Auth ConfigMap ===\033[0m"
-echo "Setting up kubeconfig..."
-aws eks update-kubeconfig --name $CLUSTER_NAME --region $REGION
-echo "Getting aws-auth ConfigMap..."
-if kubectl get configmap aws-auth -n kube-system > /dev/null 2>&1; then
-    kubectl get configmap aws-auth -n kube-system -o yaml
-else
-    echo "Error: Could not get aws-auth ConfigMap"
+# Verify kubectl is installed
+if ! command -v kubectl &> /dev/null; then
+    echo -e "${RED}Error: kubectl is not installed.${NC}"
+    exit 1
 fi
 
-# 6. Check access review
-echo -e "\n\033[0;36m=== Kubernetes Access Review ===\033[0m"
-echo "This simulates the access the GitHub Actions role would have:"
-kubectl auth can-i list pods --as=github-actions || echo "Cannot list pods as github-actions"
-kubectl auth can-i create deployments --as=github-actions || echo "Cannot create deployments as github-actions"
+# Check AWS identity
+echo -e "\n${CYAN}1. Checking AWS identity...${NC}"
+aws sts get-caller-identity || {
+    echo -e "${RED}Error: Failed to get AWS identity. Please configure AWS credentials.${NC}"
+    exit 1
+}
 
-# 7. Diagnostic summary
-echo -e "\n\033[0;32m=== Diagnostic Summary ===\033[0m"
-echo "Based on this diagnostic check:"
-echo "1. If the authentication mode is 'API' or 'API_AND_CONFIG_MAP', update both the aws-auth ConfigMap and IAM"
-echo "2. If the GitHub Actions role doesn't exist or has incorrect permissions, create/update it"
-echo "3. Make sure the aws-auth ConfigMap contains the correct role ARN mapping"
-echo ""
-echo "AWS CLI command to update the EKS cluster config (if authentication mode is 'CONFIG_MAP'):"
-echo "aws eks update-kubeconfig --name $CLUSTER_NAME --region $REGION"
-echo ""
-echo "If using IRSA (IAM Roles for Service Accounts):"
-echo "Check the OIDC provider and service account configuration in your EKS cluster"
+# Configure kubectl for EKS
+echo -e "\n${CYAN}2. Configuring kubectl for EKS...${NC}"
+aws eks update-kubeconfig --name $CLUSTER_NAME --region $REGION || {
+    echo -e "${RED}Error: Failed to update kubeconfig. Check if cluster exists.${NC}"
+    exit 1
+}
 
-# 8. Check node groups and authentication
-echo -e "\n\033[0;36m=== Node Groups and Node Role ARNs ===\033[0m"
-NODE_GROUPS=$(aws eks list-nodegroups --cluster-name $CLUSTER_NAME --region $REGION --query 'nodegroups' --output text)
-echo "Node Groups: $NODE_GROUPS"
+# Check kubectl connectivity
+echo -e "\n${CYAN}3. Testing kubectl connectivity...${NC}"
+if kubectl get svc &> /dev/null; then
+    echo -e "${GREEN}kubectl connected to the cluster successfully.${NC}"
+else
+    echo -e "${RED}Error: kubectl failed to connect to the cluster.${NC}"
+    echo -e "This could be a sign of authentication issues."
+fi
 
-for ng in $NODE_GROUPS; do
-  echo "Details for Node Group: $ng"
-  aws eks describe-nodegroup --cluster-name $CLUSTER_NAME --nodegroup-name $ng --region $REGION --query 'nodegroup.nodeRole' --output text
-done
+# Check aws-auth ConfigMap
+echo -e "\n${CYAN}4. Checking aws-auth ConfigMap...${NC}"
+if kubectl get configmap aws-auth -n kube-system &> /dev/null; then
+    echo -e "${GREEN}aws-auth ConfigMap exists.${NC}"
+    
+    # Save the ConfigMap to a file
+    kubectl get configmap aws-auth -n kube-system -o yaml > aws-auth-current.yaml
+    
+    # Check if GitHub Actions role is in the ConfigMap
+    if grep -q "$GITHUB_ROLE" aws-auth-current.yaml; then
+        echo -e "${GREEN}✓ GitHub Actions role is properly configured in aws-auth ConfigMap.${NC}"
+    else
+        echo -e "${RED}✗ GitHub Actions role is missing from aws-auth ConfigMap!${NC}"
+        echo -e "${YELLOW}Recommendation: Run the fix-aws-auth.sh script to add the role.${NC}"
+    fi
+else
+    echo -e "${RED}Error: aws-auth ConfigMap does not exist!${NC}"
+    echo -e "${YELLOW}Recommendation: Run the fix-aws-auth.sh script to create it.${NC}"
+fi
 
-# 9. Direct test of kubectl with AWS credentials
-echo -e "\n\033[0;36m=== Direct kubectl test ===\033[0m"
-echo "Testing direct kubectl access using current AWS credentials:"
-kubectl get nodes || echo "Failed to get nodes with current credentials" 
+# Check GitHub Actions role permissions
+echo -e "\n${CYAN}5. Testing GitHub Actions role permissions...${NC}"
+if kubectl auth can-i list pods --as=$GITHUB_USERNAME &> /dev/null; then
+    echo -e "${GREEN}✓ GitHub Actions ($GITHUB_USERNAME) has permission to list pods.${NC}"
+else
+    echo -e "${RED}✗ GitHub Actions ($GITHUB_USERNAME) does not have permission to list pods!${NC}"
+    echo -e "${YELLOW}Recommendation: Check role mapping in aws-auth ConfigMap.${NC}"
+fi
+
+# Check node groups
+echo -e "\n${CYAN}6. Checking node groups...${NC}"
+NODE_GROUPS=$(aws eks list-nodegroups --cluster-name $CLUSTER_NAME --region $REGION --query 'nodegroups[]' --output text)
+
+if [ ! -z "$NODE_GROUPS" ]; then
+    echo -e "${GREEN}Found $(echo $NODE_GROUPS | wc -w) node group(s).${NC}"
+    
+    for ng in $NODE_GROUPS; do
+        echo -e "\n${CYAN}Inspecting node group: $ng${NC}"
+        NODE_ROLE=$(aws eks describe-nodegroup --cluster-name $CLUSTER_NAME --nodegroup-name $ng --region $REGION --query 'nodegroup.nodeRole' --output text)
+        echo -e "Node role ARN: $NODE_ROLE"
+        
+        # Check if node role is in the aws-auth ConfigMap
+        if grep -q "$NODE_ROLE" aws-auth-current.yaml; then
+            echo -e "${GREEN}✓ Node role is properly configured in aws-auth ConfigMap.${NC}"
+        else
+            echo -e "${RED}✗ Node role is missing from aws-auth ConfigMap!${NC}"
+            echo -e "${YELLOW}Recommendation: Update aws-auth ConfigMap to include this node role.${NC}"
+        fi
+    done
+else
+    echo -e "${RED}No node groups found for the cluster.${NC}"
+fi
+
+# Check if nodes are joining the cluster
+echo -e "\n${CYAN}7. Checking if nodes are joining the cluster...${NC}"
+NODE_COUNT=$(kubectl get nodes --no-headers | wc -l)
+if [ $NODE_COUNT -gt 0 ]; then
+    echo -e "${GREEN}✓ $NODE_COUNT node(s) joined the cluster.${NC}"
+else
+    echo -e "${RED}✗ No nodes have joined the cluster!${NC}"
+    echo -e "${YELLOW}Recommendation: Check node group configuration and aws-auth ConfigMap.${NC}"
+fi
+
+echo -e "\n${CYAN}=== Diagnostic Summary ===${NC}"
+echo -e "1. AWS credentials: ${GREEN}Verified${NC}"
+echo -e "2. Cluster connectivity: ${GREEN}Tested${NC}"
+echo -e "3. aws-auth ConfigMap: ${GREEN}Checked${NC}"
+echo -e "4. GitHub Actions permissions: ${GREEN}Tested${NC}"
+echo -e "5. Node groups: ${GREEN}Inspected${NC}"
+echo -e "6. Node joining: ${GREEN}Checked${NC}"
+
+echo -e "\n${CYAN}=== Recommendations ===${NC}"
+echo -e "- If GitHub Actions workflow is failing with authentication issues:"
+echo -e "  - Ensure the GitHub Actions role ARN is correct"
+echo -e "  - Verify the role has the necessary permissions"
+echo -e "  - Check if aws-auth ConfigMap is properly configured"
+echo -e "- Run fix-aws-auth.sh to automatically fix common issues"
+echo -e "- For persistent issues, refer to the EKS documentation for troubleshooting steps" 
