@@ -66,7 +66,6 @@ If you encounter issues with EKS authentication:
 
 ## Security Best Practices
 
-- Don't store these scripts with actual values in version control
 - Keep AWS credentials secure and use only the necessary permissions
 - Consider using AWS IAM roles with temporary credentials when possible
 - Use a .gitignore file to prevent accidental commits of sensitive files 
