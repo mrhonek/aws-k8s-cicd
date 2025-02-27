@@ -1,14 +1,15 @@
-# AWS EKS CI/CD Pipeline with Helm
+# AWS EKS CI/CD Pipeline with Terraform, Helm, and GitHub Actions
 
-A complete CI/CD pipeline for deploying applications to Amazon EKS using GitHub Actions, Helm, and ECR.
+A complete CI/CD pipeline for deploying applications to Amazon EKS using Terraform, GitHub Actions, Helm, and ECR.
 
 ## Overview
 
 This project demonstrates a modern CI/CD workflow for Kubernetes applications:
 
-1. **Build & Push**: Containerize your application and push to Amazon ECR
-2. **Deploy**: Use Helm to deploy to Amazon EKS
-3. **Notify**: Send deployment status notifications to Slack
+1. **Infrastructure as Code**: Use Terraform to provision and manage AWS infrastructure
+2. **Build & Push**: Containerize your application and push to Amazon ECR
+3. **Deploy**: Use Helm to deploy to Amazon EKS
+4. **Notify**: Send deployment status notifications to Slack
 
 ## Prerequisites
 
@@ -16,12 +17,60 @@ This project demonstrates a modern CI/CD workflow for Kubernetes applications:
   - ECR (Elastic Container Registry)
   - EKS (Elastic Kubernetes Service)
   - IAM (Identity and Access Management)
+  - VPC and associated networking services
 - GitHub repository
 - Slack workspace (for notifications)
+- Terraform CLI (for infrastructure management)
 
 ## Setup Instructions
 
-### 1. AWS Infrastructure
+### 1. Infrastructure as Code with Terraform
+
+The project uses Terraform to provision and manage the following AWS resources:
+- VPC with public and private subnets
+- EKS cluster and node groups
+- IAM roles and policies
+- Security groups
+- ECR repository
+
+#### Terraform Directory Structure
+```
+environments/
+└── prod/
+    ├── main.tf        # Main configuration file
+    ├── variables.tf   # Input variables
+    ├── outputs.tf     # Output values
+    └── terraform.tfvars # Variable values for production
+```
+
+#### Deploying Infrastructure
+```bash
+# Initialize Terraform
+cd environments/prod
+terraform init
+
+# Preview changes
+terraform plan
+
+# Apply changes
+terraform apply
+```
+
+#### Destroying Infrastructure
+When you're done with the project, you can tear down all resources:
+```bash
+terraform destroy
+```
+
+#### Benefits of Infrastructure as Code
+- **Reproducibility**: The entire infrastructure can be recreated consistently
+- **Version Control**: Infrastructure changes are tracked in Git alongside application code
+- **Documentation**: The Terraform code serves as living documentation of your infrastructure
+- **Modularity**: Components can be reused across different environments
+- **Testing**: Infrastructure can be validated before deployment
+- **Automation**: Reduces manual configuration steps and human error
+
+### 2. AWS Infrastructure
 
 #### IAM Role for GitHub Actions
 
@@ -152,6 +201,13 @@ The CI/CD pipeline can be triggered in two ways:
 
 ### Common Issues
 
+#### Terraform State Issues
+
+If you encounter Terraform state corruption or conflicts:
+1. Check the state file for corruption: `terraform state list`
+2. Refresh the state: `terraform refresh`
+3. If necessary, use state manipulation commands: `terraform state mv`, `terraform state rm`
+
 #### Authentication Errors
 
 If you see "the server has asked for the client to provide credentials":
@@ -173,6 +229,26 @@ This repository includes helpful scripts in the `docs/` directory:
 - `apply-aws-auth.sh`: Fixes the aws-auth ConfigMap for GitHub Actions authentication
 - `eks-auth-diagnostic.sh`: Diagnoses EKS authentication issues
 - `fix-aws-auth-simple.sh`: Simple script to patch the aws-auth ConfigMap
+- `tf-deploy.sh`: Helper script for Terraform deployment workflow
+
+## Project Components
+
+### Infrastructure (Terraform)
+- VPC with public and private subnets across multiple availability zones
+- EKS cluster with managed node groups
+- IAM roles with least privilege permissions
+- Security groups for controlled network access
+- ECR repository for container images
+
+### CI/CD (GitHub Actions)
+- Automated workflows for build, test, and deploy
+- Secure authentication with AWS using OIDC
+- Integration with Slack for notifications
+
+### Deployment (Helm)
+- Kubernetes manifests templated for flexibility
+- Release management with versioning
+- Configuration values separated from templates
 
 ## License
 
