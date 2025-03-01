@@ -1,9 +1,9 @@
 name: Application Health Check
 
 on:
-  schedule:
-    # Run every 30 minutes
-    - cron: '*/30 * * * *'
+  # schedule:
+  #   # Run every 30 minutes
+  #   - cron: '*/30 * * * *'
   workflow_dispatch:
     # Allow manual triggering
 
